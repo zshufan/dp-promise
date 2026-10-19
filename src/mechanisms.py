@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 
 from src.schedules import linear_beta_schedule
 from src.utils import load_dataset_from_config
+from src.cached_accounting import cached_privacy_components
 
 from scipy import optimize
 from scipy.stats import norm
@@ -22,6 +23,8 @@ def delta_eps_mu(eps, mu):
 
 # inverse Dual
 def eps_from_mu(mu, delta):
+    if mu == 0 or delta_eps_mu(0, mu) <= delta:
+        return 0.0
 
     def f(x):
         return delta_eps_mu(x, mu) - delta
@@ -40,6 +43,10 @@ def gdp_mech(sample_rate1, sample_rate2, niter1, niter2, sigma,
 
 def eps_from_config(config):
     dataset = load_dataset_from_config(config)
+    if config.train.get("phase1_objective", "original") == "cached_intermediate":
+        # Exact cache GDP; Phase-II GDP term is an approximation only.
+        details = cached_privacy_components(config, len(dataset))
+        return eps_from_mu(details["mu_total_approx"], float(config.dp.delta))
     d = config.data.img_ch * config.data.img_size * config.data.img_size
 
     dataloader1 = DataLoader(
