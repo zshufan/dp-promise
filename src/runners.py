@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from src.trainers import DPPromiseTrainer
 from src.trainers import VanillaDDPMTrainer
+from src.cached_phase1 import CachedIntermediateTrainer, make_private_cache_loader
 from src.ema import ExponentialMovingAverage
 from src.utils import sample_example_image
 from src.utils import sample_images
@@ -119,18 +120,36 @@ def train_dp_promise(
         decay=config.train.ema_rate,
     )
 
-    # Phase I
-    dataloader1 = DPDataLoader.from_data_loader(dataloader1)
+    # Phase I: only cache construction reads original records.
+    phase1_objective = config.train.get("phase1_objective", "original")
+    if phase1_objective == "cached_intermediate":
+        cached_trainer = CachedIntermediateTrainer(config).to(device)
+        phase1_loader = None
+        if config.train.epochs1 > 0:
+            phase1_loader = make_private_cache_loader(
+                dataloader1, cached_trainer.alpha_bar, cached_trainer.cache_step
+            )
+            logging.info(
+                "Private Phase-I cache: %d images, c=%d, gap=%d (RAM only)",
+                len(phase1_loader.dataset), cached_trainer.cache_step, cached_trainer.gap_steps,
+            )
+    elif phase1_objective == "original":
+        cached_trainer = None
+        phase1_loader = DPDataLoader.from_data_loader(dataloader1)
+    else:
+        raise ValueError(f"Unknown Phase-I objective: {phase1_objective}")
 
     def train_non_private():
         all_loss = 0
         step = 0
         model.train()
-        for X, y in tqdm(dataloader1):
-            X = X.to(device)
-            y = torch.zeros_like(y, dtype=torch.long).to(device)
-
-            loss = trainer(model, X, y, phase="1")
+        for batch in tqdm(phase1_loader):
+            X = batch[0].to(device)
+            y = torch.zeros(X.shape[0], dtype=torch.long, device=device)
+            if cached_trainer is None:
+                loss = trainer(model, X, y, phase="1")
+            else:
+                loss = cached_trainer(model, X, y)
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -150,6 +169,9 @@ def train_dp_promise(
     for epoch in range(config.train.epochs1):
         train_non_private()
 
+    # The private cache is neither checkpointed nor passed to Phase II.
+    if phase1_objective == "cached_intermediate":
+        del phase1_loader
     ema.copy_to(model.parameters())
 
     # Phase II
