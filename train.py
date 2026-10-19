@@ -16,6 +16,7 @@ from src.utils import get_num_parameters
 from src.utils import seed_everthing
 from src.runners import train_dp_promise
 from src.mechanisms import eps_from_config
+from src.cached_accounting import cached_privacy_components
 
 
 def main(config, opt):
@@ -62,8 +63,18 @@ def main(config, opt):
         num_workers=config.data.num_workers,
     )
 
-    # Calculate privacy budget
-    if config.dp.epsilon == "inf":
+    # Cached mode has an exact ideal-Gaussian cache bound, but only an
+    # approximate Phase-II GDP estimate: do not report a DP certificate.
+    if config.train.get("phase1_objective", "original") == "cached_intermediate":
+        details = cached_privacy_components(config, len(dataset))
+        eps = eps_from_config(config)
+        logging.warning(
+            "Cache mu=%.6g; Phase-II mu~%.6g; composed mu~%.6g, "
+            "estimated epsilon~%.6g at delta=%s. NOT certified end-to-end DP.",
+            details["mu_cache"], details["mu_phase2_approx"],
+            details["mu_total_approx"], eps, config.dp.delta,
+        )
+    elif config.dp.epsilon == "inf":
         logging.info("Epsilon: inf")
     else:
         eps = eps_from_config(config)
