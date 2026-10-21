@@ -1,7 +1,5 @@
 import tensorflow_gan as tfgan
 import numpy as np
-import torch
-import random
 import logging
 from tqdm import tqdm
 from scipy import linalg
@@ -16,27 +14,10 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 session = tf.compat.v1.InteractiveSession()
 
-
-def set_logger(f, level="INFO"):
-    logger = logging.getLogger()
-
-    formatter = logging.Formatter(
-        '%(levelname)s - %(filename)s - %(asctime)s - %(message)s')
-
-    handler = logging.StreamHandler(open(f, "w"))
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-    logger.setLevel(level)
-
-
-def seed_everthing(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    random.seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = True
+if __package__:
+    from .classifier_utils import seed_everthing, set_logger, train_classifier, test_classifier
+else:
+    from classifier_utils import seed_everthing, set_logger, train_classifier, test_classifier
 
 
 def normalize_data(x_train, x_test):
@@ -123,62 +104,6 @@ def train_sklearn_models(gen_images, gen_labels, dataset):
         accs.append(acc)
     mean_acc = np.mean(accs)
     return mean_acc
-
-
-def train_classifier(
-    model: torch.nn.Module,
-    train_dataloader,
-    val_dataloader,
-    optimizer,
-    epochs=50,
-):
-    loss_fn = torch.nn.CrossEntropyLoss()
-    device = next(model.parameters()).device
-    best_acc = 0
-    best_model_state_dict = model.state_dict().copy()
-    for epoch in range(epochs):
-        model.train()
-        for X, y in tqdm(train_dataloader, desc=f"Epoch{epoch + 1}"):
-            X, y = X.to(device), y.to(device)
-            optimizer.zero_grad()
-            output = model(X)
-            loss = loss_fn(output, y)
-            loss.backward()
-            optimizer.step()
-        with torch.no_grad():
-            model.eval()
-            correct = 0
-            total = 0
-            for X, y in tqdm(val_dataloader, desc=f"Epoch{epoch + 1}"):
-                X, y = X.to(device), y.to(device)
-                output = model(X)
-                _, pred = torch.max(output, dim=1)
-
-                total += y.size(0)
-                correct += (y == pred).sum().item()
-            acc = correct / total
-            if acc > best_acc:
-                best_acc = acc
-                best_model_state_dict = model.state_dict().copy()
-    model.load_state_dict(best_model_state_dict)
-    return best_acc
-
-
-@torch.no_grad()
-def test_classifier(model: torch.nn.Module, dataloader):
-    model.eval()
-    device = next(model.parameters()).device
-    total = 0
-    correct = 0
-    for X, y in tqdm(dataloader):
-        X, y = X.to(device), y.to(device)
-        output = model(X)
-        _, pred = torch.max(output, dim=1)
-
-        total += y.size(0)
-        correct += (y == pred).sum().item()
-    acc = correct / total
-    return acc
 
 
 # INCEPTION_TFHUB = tfgan.eval.INCEPTION_TFHUB

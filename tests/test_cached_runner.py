@@ -33,7 +33,8 @@ class TinyModel(torch.nn.Module):
 
 
 def test_runner_uses_cache_only_across_epochs(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "src.opacus", types.ModuleType("src.opacus"))
+    # Opacus is an installed package; its checkout need not live under src/.
+    monkeypatch.setitem(sys.modules, "src.opacus", None)
     opacus = types.ModuleType("opacus")
     class PrivacyEngine:
         def make_private(self, module, optimizer, data_loader, **kw):
@@ -68,11 +69,14 @@ def test_runner_uses_cache_only_across_epochs(monkeypatch, tmp_path):
     ema.ExponentialMovingAverage = EMA
     monkeypatch.setitem(sys.modules, "src.ema", ema)
     utils = types.ModuleType("src.utils")
+    utils.seed_everthing = lambda seed: None
     utils.sample_example_image = lambda model, config: torch.zeros(1,1,2,2)
     utils.sample_images = lambda model, config, num_samples: (
         torch.zeros(2,1,2,2), torch.zeros(2, dtype=torch.long))
     monkeypatch.setitem(sys.modules, "src.utils", utils)
-    sys.modules.pop("src.runners", None)
+    # Restore the real runner (or remove this stubbed import) after the test.
+    monkeypatch.setitem(sys.modules, "src.runners", None)
+    del sys.modules["src.runners"]
     runner = importlib.import_module("src.runners")
     monkeypatch.setattr(runner, "tqdm", lambda x: x)
 

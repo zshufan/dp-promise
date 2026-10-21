@@ -161,7 +161,8 @@ def sample_images(model, config, num_samples):
         batch_size=config.sample.batch_size,
         shuffle=False,
         pin_memory=True,
-        num_workers=1,
+        # Labels are already in RAM; avoid forking a worker after training.
+        num_workers=0,
     )
 
     images = []

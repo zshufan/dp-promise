@@ -10,9 +10,7 @@ from src.cached_phase1 import CachedIntermediateTrainer, make_private_cache_load
 from src.ema import ExponentialMovingAverage
 from src.utils import sample_example_image
 from src.utils import sample_images
-
-import importlib
-opacus = importlib.import_module('src.opacus')
+from src.utils import seed_everthing
 
 from opacus.data_loader import DPDataLoader
 from opacus.utils.batch_memory_manager import BatchMemoryManager
@@ -89,7 +87,7 @@ def train_ddpm(
         metrics = train_step()
         logging.info(f"Epoch{epoch+1}: {metrics}")
         with torch.no_grad():
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 10 == 0 or epoch + 1 == config.train.epochs:
                 save_step(epoch)
             test_step(epoch)
 
@@ -175,6 +173,9 @@ def train_dp_promise(
     ema.copy_to(model.parameters())
 
     # Phase II
+    # Optional experiment control: Phase I consumes different amounts of RNG.
+    if config.train.get("phase2_seed") is not None:
+        seed_everthing(int(config.train.phase2_seed))
     optimizer = torch.optim.Adam(model.parameters(), lr=config.train.lr2)
     ema = ExponentialMovingAverage(
         model.parameters(),
@@ -216,10 +217,10 @@ def train_dp_promise(
                 all_loss += loss.item()
                 step += 1
         all_loss /= step
-        logging.info(f"Epoch{epoch+1}: loss1 {all_loss}")
+        logging.info(f"Epoch{epoch+1}: loss2 {all_loss}")
 
     def save_step(epoch):
-        if (epoch + 1) % 10 != 0 or epoch + 1 != config.train.epochs2:
+        if (epoch + 1) % 10 != 0 and epoch + 1 != config.train.epochs2:
             return
         torch.save(
             model._module.state_dict(),
@@ -260,7 +261,13 @@ def train_dp_promise(
     logging.info("Training complete")
 
     def final_step():
-        images, labels = sample_images(model, config, num_samples=60000)
+        sample_config = config.get("sample", {})
+        if sample_config.get("final_seed") is not None:
+            seed_everthing(int(sample_config["final_seed"]))
+        model.eval()
+        images, labels = sample_images(
+            model, config, num_samples=int(sample_config.get("num_samples", 60000)),
+        )
 
         (workdir / "evaluation").mkdir(exist_ok=True)
         synthesis_name = f"synthesis.npz"
